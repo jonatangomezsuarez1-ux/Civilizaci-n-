@@ -1,0 +1,168 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>V7 Debug</title>
+<style>
+body{background:#0b1118;color:#fff;padding:10px;font-family:system-ui;font-size:14px}
+canvas{background:#111;display:block;width:100%;max-width:500px;margin:10px auto;border-radius:8px}
+#dbg{background:#0a1420;border:1px solid #22344a;border-radius:10px;padding:10px;margin-top:10px;font-family:monospace;font-size:12px;color:#5ed7ff;white-space:pre-wrap;line-height:1.6}
+#err{background:#300;padding:10px;margin-top:10px;font-family:monospace;font-size:13px;display:none;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<h1>🐛 V7 Debug</h1>
+<canvas id="c" width="500" height="500"></canvas>
+<div id="dbg">Esperando...</div>
+<div id="err"></div>
+
+<script>
+var $ = function(id){ return document.getElementById(id); };
+var log = function(msg){
+  $('dbg').textContent += '\n' + msg;
+};
+
+window.onerror = function(msg, url, line){
+  $('err').style.display = 'block';
+  $('err').textContent = 'ERROR línea ' + line + ':\n\n' + msg;
+  return false;
+};
+
+$('dbg').textContent = '1. Script arrancó';
+
+var W = 20;
+var CELL = 25;
+var S = null;
+
+function rand(a, b){ return Math.random() * (b - a) + a; }
+function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+function makeWorld(){
+  var cells = [];
+  for (var y = 0; y < W; y++){
+    var row = [];
+    for (var x = 0; x < W; x++){
+      var t = 'grass';
+      if (Math.hypot(x - 14, y - 6) < 3.5) t = 'water';
+      if (Math.hypot(x - 4, y - 14) < 2.5) t = 'water';
+      var isTree = t === 'grass' && Math.random() < 0.12;
+      var shade = Math.random() * 0.15 - 0.05;
+      row.push({ terrain: t, tree: isTree, fruit: isTree, fruitTimer: 0, shade: shade });
+    }
+    cells.push(row);
+  }
+  return { cells: cells };
+}
+$('dbg').textContent += '\n2. makeWorld definido';
+
+S = { world: makeWorld(), npcs: [] };
+$('dbg').textContent += '\n3. Mundo generado';
+
+// Contar árboles
+var treeCount = 0, waterCount = 0, grassCount = 0;
+for (var y = 0; y < W; y++){
+  for (var x = 0; x < W; x++){
+    var c = S.world.cells[y][x];
+    if (c.tree) treeCount++;
+    if (c.terrain === 'water') waterCount++;
+    else grassCount++;
+  }
+}
+$('dbg').textContent += '\n4. Celdas: ' + (W*W) + ' · árboles: ' + treeCount + ' · agua: ' + waterCount + ' · pasto: ' + grassCount;
+
+var canvas = $('c');
+var ctx = canvas.getContext('2d');
+$('dbg').textContent += '\n5. Canvas y ctx obtenidos';
+
+if (!ctx){
+  $('dbg').textContent += '\n❌ NO SE PUDO OBTENER CONTEXT';
+} else {
+  $('dbg').textContent += '\n6. Empezando a dibujar...';
+  
+  // Limpiar
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  $('dbg').textContent += '\n7. Canvas limpiado';
+  
+  // Dibujar cada celda
+  try {
+    for (var y = 0; y < W; y++){
+      for (var x = 0; x < W; x++){
+        var c = S.world.cells[y][x];
+        var px = x * CELL;
+        var py = y * CELL;
+        
+        if (c.terrain === 'water'){
+          ctx.fillStyle = '#2c6aa0';
+        } else {
+          var base = Math.floor(58 + c.shade * 60);
+          var r = Math.floor(base * 0.55);
+          var g = Math.floor(base + 20);
+          var b = Math.floor(base * 0.65);
+          ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
+        }
+        ctx.fillRect(px, py, CELL, CELL);
+      }
+    }
+    $('dbg').textContent += '\n8. Suelo dibujado: ' + (W*W) + ' celdas';
+  } catch(e) {
+    $('dbg').textContent += '\n❌ ERROR dibujando suelo: ' + e.message;
+  }
+  
+  // Dibujar árboles simples
+  try {
+    for (var y = 0; y < W; y++){
+      for (var x = 0; x < W; x++){
+        var c = S.world.cells[y][x];
+        if (!c.tree) continue;
+        var cx = x * CELL + CELL / 2;
+        var cy = y * CELL + CELL / 2;
+        
+        ctx.fillStyle = '#5a3d24';
+        ctx.fillRect(cx - 2, cy - 2, 4, 9);
+        
+        ctx.fillStyle = c.fruit ? '#2d7a3a' : '#3d5f3a';
+        ctx.beginPath();
+        ctx.arc(cx, cy - 6, 8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    $('dbg').textContent += '\n9. Árboles dibujados';
+  } catch(e) {
+    $('dbg').textContent += '\n❌ ERROR dibujando árboles: ' + e.message;
+  }
+  
+  // Dibujar 3 NPCs de prueba
+  try {
+    var testNPCs = [
+      { x: 3, y: 3, name: 'A' },
+      { x: 16, y: 3, name: 'B' },
+      { x: 10, y: 16, name: 'C' }
+    ];
+    for (var i = 0; i < testNPCs.length; i++){
+      var n = testNPCs[i];
+      var px = n.x * CELL + CELL / 2;
+      var py = n.y * CELL + CELL / 2;
+      
+      ctx.fillStyle = '#e8c39e';
+      ctx.beginPath();
+      ctx.arc(px, py - 6, 4, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.fillStyle = '#d95858';
+      ctx.fillRect(px - 4, py - 2, 8, 8);
+      
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 7px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(n.name, px, py - 6);
+    }
+    $('dbg').textContent += '\n10. NPCs dibujados ✅ TODO OK';
+  } catch(e) {
+    $('dbg').textContent += '\n❌ ERROR dibujando NPCs: ' + e.message;
+  }
+}
+</script>
+</body>
+</html>
