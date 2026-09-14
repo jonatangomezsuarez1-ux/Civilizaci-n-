@@ -1,0 +1,506 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NPC con IA</title><style>
+*{box-sizing:border-box}body{margin:0;background:#0b1118;color:#e8eef7;font-family:system-ui;font-size:14px}
+.wrap{max-width:800px;margin:auto;padding:10px}
+.card{background:#111c2a;border:1px solid #22344a;border-radius:14px;padding:12px;margin-bottom:10px}
+.brand{font-size:17px;font-weight:800}.muted{color:#8fa3bb}.small{font-size:12px}
+button{background:#1a2b40;color:#eaf2ff;border:1px solid #2c4666;border-radius:10px;padding:8px 12px;cursor:pointer;margin:2px}
+button.danger{background:#4a1e26}
+.mapbox{height:340px;background:#0a1520;border-radius:12px;overflow:hidden;border:1px solid #22344a}
+canvas{width:100%;height:100%;display:block;image-rendering:pixelated}
+.row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1b2a3d;font-size:13px}
+.npc{padding:9px;border:1px solid #22344a;border-radius:12px;background:#0e1927;cursor:pointer;margin-bottom:6px}
+.npc.sel{outline:2px solid #54d5ff}
+.npc.dead{opacity:.4}
+.reason{background:#132a3d;border:1px solid #2a5b7a;border-radius:10px;padding:7px;font-size:12px;margin-top:5px}
+.mem{padding:6px 9px;border-left:3px solid #3d5c80;margin:4px 0;font-size:12px;background:#0a1420;border-radius:0 6px 6px 0}
+.mem.strong{border-left-color:#5ed7ff}.mem.weak{opacity:.5}
+.chat{padding:6px 9px;background:#0a1420;border-radius:8px;margin:4px 0;font-size:13px;border-left:3px solid #7a5c34}
+.chat.ia{border-left-color:#5dd97f;background:#0d1f18}
+.status{padding:8px;border-radius:10px;font-size:13px;margin-bottom:8px}
+.status.ok{background:#0d2a1a;border:1px solid #2d6b3d;color:#7ee89a}
+.status.fail{background:#2a0d0d;border:1px solid #6b2d2d;color:#ff8888}
+.status.wait{background:#1c2a3d;border:1px solid #3d5c80;color:#8fa3bb}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}
+.tabs button.active{background:#23627d}
+</style></head><body><div class="wrap">
+
+<div class="card">
+<div class="brand">🧠 NPCs con IA y memoria</div>
+<div id="iaStatus" class="status wait" style="margin-top:8px">⏳ Probando conexión con IA…</div>
+<div><button id="btnRun" onclick="toggle()">▶ Iniciar</button>
+<button onclick="advance(1)">+1h</button>
+<button onclick="advance(24)">+1 día</button>
+<button onclick="sp=1">1×</button><button onclick="sp=2">2×</button><button onclick="sp=4">4×</button>
+<button class="danger" onclick="reset()">Reiniciar</button></div>
+<div class="small muted" style="margin-top:6px"><span>📅 Día <b id="day">0</b></span> · <span>🕐 <b id="hour">06</b></span> · <span>👥 <b id="count">4</b></span> · <span>💬 <b id="chats">0</b></span> · <span>🤖 <b id="iaCount">0</b></span></div>
+</div>
+
+<div class="card">
+<div class="row"><b>🗺️ Mundo 20×20</b><span class="small muted" id="selName">—</span></div>
+<div class="mapbox"><canvas id="c" width="400" height="400"></canvas></div>
+</div>
+
+<div class="card"><div id="npcList"></div></div>
+
+<div class="card">
+<div class="tabs">
+<button id="tMind" class="active" onclick="setTab('mind')">🧠 Estado</button>
+<button id="tMem" onclick="setTab('mem')">📜 Memoria</button>
+<button id="tChat" onclick="setTab('chat')">💬 Conversaciones</button>
+</div>
+<div id="detail"></div>
+</div>
+
+</div>
+<script>
+'use strict';
+var W=20, sp=1, running=false, timer=null, S=null, selId=1, tab='mind';
+
+var $=function(id){return document.getElementById(id)};
+var clamp=function(v,a,b){return Math.max(a,Math.min(b,v))};
+var rnd=function(a,b){return Math.random()*(b-a)+a};
+var rint=function(a,b){return Math.floor(rnd(a,b+1))};
+var pick=function(a){return a[Math.floor(Math.random()*a.length)]};
+var dist=function(a,b){return Math.hypot(a.x-b.x,a.y-b.y)};
+var chance=function(p){return Math.random()<p};
+
+// ============ MUNDO ============
+function makeWorld(){
+  var cells=[];
+  for(var y=0;y<W;y++){
+    var row=[];
+    for(var x=0;x<W;x++){
+      var t='grass';
+      if(Math.hypot(x-14,y-6)<3.5) t='water';
+      if(Math.hypot(x-4,y-14)<2.5) t='water';
+      var isTree=t==='grass'&&chance(0.11);
+      row.push({terrain:t,tree:isTree,fruit:isTree,shelter:null});
+    }
+    cells.push(row);
+  }
+  return {cells:cells};
+}
+function cellAt(x,y){
+  if(x<0||y<0||x>=W||y>=W) return null;
+  return S.world.cells[Math.floor(y)][Math.floor(x)];
+}
+
+// ============ MEMORIA ============
+function remember(npc,tipo,contenido,opts){
+  opts=opts||{};
+  // Reforzar si ya existe parecido
+  for(var i=0;i<npc.memories.length;i++){
+    var m=npc.memories[i];
+    if(m.tipo===tipo && m.contenido===contenido && m.x===opts.x && m.y===opts.y){
+      m.fuerza=clamp(m.fuerza+10,0,100);
+      m.dia=S.day; m.hora=S.hour;
+      return m;
+    }
+  }
+  var mem={
+    id:Math.random().toString(36).slice(2),
+    tipo:tipo, contenido:contenido,
+    x:opts.x!==undefined?opts.x:null,
+    y:opts.y!==undefined?opts.y:null,
+    dia:S?S.day:0, hora:S?S.hour:0,
+    fuerza:opts.fuerza||40,
+    confianza:opts.confianza||70,
+    emocion:opts.emocion||null,
+    fuente:opts.fuente||'vivido',
+    distorsionado:false
+  };
+  npc.memories.unshift(mem);
+  if(npc.memories.length>40){
+    npc.memories.sort(function(a,b){return b.fuerza-a.fuerza});
+    npc.memories=npc.memories.slice(0,40);
+  }
+  return mem;
+}
+function decay(npc){
+  for(var i=npc.memories.length-1;i>=0;i--){
+    var m=npc.memories[i];
+    var v=0.08;
+    if(m.emocion==='miedo'||m.emocion==='tristeza') v*=0.4;
+    if(m.emocion==='alegria') v*=0.6;
+    m.fuerza=clamp(m.fuerza-v,0,100);
+    if(m.fuerza<=0) npc.memories.splice(i,1);
+  }
+}
+function bestRecall(npc,tipo,minF){
+  minF=minF||25;
+  var best=null;
+  for(var i=0;i<npc.memories.length;i++){
+    var m=npc.memories[i];
+    if(m.tipo!==tipo) continue;
+    if(m.fuerza<minF) continue;
+    if(!best||m.fuerza>best.fuerza) best=m;
+  }
+  return best;
+}
+function transmit(from,to,mem){
+  var x=mem.x,y=mem.y;
+  if(chance(0.3)&&x!==null){x=clamp(x+rint(-3,3),0,W-1);y=clamp(y+rint(-3,3),0,W-1);}
+  remember(to,mem.tipo,mem.contenido,{x:x,y:y,fuerza:mem.fuerza*0.7,confianza:mem.confianza*0.6,emocion:mem.emocion,fuente:'de:'+from.name});
+}
+
+// ============ NPC ============
+function makeNPC(id,name,trait,x,y){
+  return {
+    id:id,name:name,trait:trait,x:x,y:y,alive:true,
+    age:20+Math.random()*8,
+    hunger:20+Math.random()*15,thirst:20+Math.random()*15,
+    energy:80+Math.random()*15,health:100,
+    emotions:{miedo:0,alegria:30,curiosidad:50},
+    memories:[],relations:{},conversations:[],
+    currentGoal:null,goalTarget:null,goalReason:'nada',lastAction:'—',
+    offspring:0,partner:null,sleeping:false,lastTalkTime:-999
+  };
+}
+function rel(a,b){
+  if(!a.relations[b.id]) a.relations[b.id]={trust:0,encounters:0};
+  return a.relations[b.id];
+}
+
+// ============ PERCEPCIÓN ============
+function perceive(npc){
+  var cx=Math.floor(npc.x),cy=Math.floor(npc.y);
+  var seen={water:null,tree:null,shelter:null,npcs:[]};
+  for(var dy=-4;dy<=4;dy++)for(var dx=-4;dx<=4;dx++){
+    var c=cellAt(cx+dx,cy+dy);
+    if(!c) continue;
+    if(c.terrain==='water'&&!seen.water) seen.water={x:cx+dx,y:cy+dy};
+    if(c.tree&&c.fruit&&!seen.tree) seen.tree={x:cx+dx,y:cy+dy};
+    if(c.shelter&&!seen.shelter) seen.shelter={x:cx+dx,y:cy+dy};
+  }
+  for(var i=0;i<S.npcs.length;i++){
+    var o=S.npcs[i];
+    if(o.id===npc.id||!o.alive) continue;
+    if(dist(npc,o)<=4) seen.npcs.push(o);
+  }
+  return seen;
+}
+
+// ============ DECISIÓN ============
+function decide(npc,seen){
+  if(npc.health<30) return {goal:'rest',reason:'salud crítica'};
+  var noche=S.hour>=20||S.hour<6;
+  if(noche&&npc.energy<60){
+    if(seen.shelter) return {goal:'sleep',target:seen.shelter,reason:'noche · refugio cerca'};
+    var rSh=bestRecall(npc,'esp_sh',30);
+    if(rSh) return {goal:'sleep',target:{x:rSh.x,y:rSh.y},reason:'noche · recuerdo refugio'};
+    return {goal:'sleep_here',reason:'noche · duermo aquí'};
+  }
+  if(npc.thirst>65){
+    if(seen.water){
+      remember(npc,'esp_w','agua',{x:seen.water.x,y:seen.water.y,fuerza:70});
+      return {goal:'drink',target:seen.water,reason:'sed alta · veo agua'};
+    }
+    var mW=bestRecall(npc,'esp_w',25);
+    if(mW) return {goal:'drink',target:{x:mW.x,y:mW.y},reason:'sed · recuerdo agua en ('+mW.x+','+mW.y+')'+(mW.distorsionado?' [borroso]':'')};
+    return {goal:'explore',reason:'sed · no recuerdo agua'};
+  }
+  if(npc.hunger>60){
+    if(seen.tree){
+      remember(npc,'esp_t','árbol con frutos',{x:seen.tree.x,y:seen.tree.y,fuerza:60});
+      return {goal:'eat',target:seen.tree,reason:'hambre · veo frutos'};
+    }
+    var mT=bestRecall(npc,'esp_t',25);
+    if(mT) return {goal:'eat',target:{x:mT.x,y:mT.y},reason:'hambre · recuerdo árbol en ('+mT.x+','+mT.y+')'+(mT.distorsionado?' [borroso]':'')};
+    return {goal:'explore',reason:'hambre · no recuerdo árboles'};
+  }
+  if(npc.emotions.miedo>50) return {goal:'freeze',reason:'miedo alto'};
+  if(npc.energy<40) return {goal:'rest',reason:'energía baja'};
+  if(seen.npcs.length>0&&chance(0.3)){
+    var o=pick(seen.npcs);
+    var r=rel(npc,o);
+    if(r.trust<-30) return {goal:'avoid',target:{x:o.x,y:o.y},reason:'evito a '+o.name};
+    return {goal:'socialize',target:{x:o.x,y:o.y},targetName:o.name,targetId:o.id,reason:'veo a '+o.name};
+  }
+  return {goal:'explore',reason:'tranquilo'};
+}
+
+// ============ ACCIÓN ============
+function act(npc,d){
+  npc.currentGoal=d.goal;
+  npc.goalTarget=d.target;
+  npc.goalReason=d.reason;
+  npc.lastAction=d.goal;
+  npc.sleeping=false;
+
+  if(d.goal==='rest'){npc.energy=clamp(npc.energy+6,0,100);return}
+  if(d.goal==='sleep_here'){npc.sleeping=true;npc.energy=clamp(npc.energy+10,0,100);return}
+  if(d.goal==='freeze'){npc.emotions.miedo=clamp(npc.emotions.miedo-2,0,100);return}
+  if(d.goal==='explore'){
+    npc.x=clamp(npc.x+rnd(-1.2,1.2),0,W-1);
+    npc.y=clamp(npc.y+rnd(-1.2,1.2),0,W-1);
+    return;
+  }
+  if(d.goal==='avoid'&&d.target){
+    var dx=npc.x-d.target.x,dy=npc.y-d.target.y,dd=Math.hypot(dx,dy)||1;
+    npc.x=clamp(npc.x+dx/dd*0.9,0,W-1);
+    npc.y=clamp(npc.y+dy/dd*0.9,0,W-1);
+    return;
+  }
+  if(d.goal==='sleep'&&d.target){
+    if(dist(npc,d.target)<0.7){npc.sleeping=true;npc.energy=clamp(npc.energy+14,0,100);}
+    else{
+      var sx=d.target.x-npc.x,sy=d.target.y-npc.y,sd=Math.hypot(sx,sy);
+      npc.x=clamp(npc.x+sx/sd*0.7,0,W-1);
+      npc.y=clamp(npc.y+sy/sd*0.7,0,W-1);
+    }
+    return;
+  }
+  if(d.target){
+    var tx=d.target.x-npc.x,ty=d.target.y-npc.y,td=Math.hypot(tx,ty);
+    if(td<0.6){
+      if(d.goal==='drink'){
+        npc.thirst=0;
+        remember(npc,'epi','bebí agua',{x:Math.floor(npc.x),y:Math.floor(npc.y),fuerza:50,emocion:'alegria'});
+      } else if(d.goal==='eat'){
+        var c=cellAt(npc.x,npc.y);
+        if(c&&c.tree&&c.fruit){
+          c.fruit=false;npc.hunger=0;
+          remember(npc,'epi','comí fruta',{x:Math.floor(npc.x),y:Math.floor(npc.y),fuerza:50,emocion:'alegria'});
+        }
+      } else if(d.goal==='socialize'){
+        talk(npc, d.targetId);
+      }
+    } else {
+      npc.x=clamp(npc.x+tx/td*0.7,0,W-1);
+      npc.y=clamp(npc.y+ty/td*0.7,0,W-1);
+    }
+  }
+}
+
+// ============ IA ============
+var iaOK=0, iaFail=0, iaPending=0;
+
+function buildPrompt(a,b,concepts){
+  var recs=(a.memories||[]).slice(0,3).map(function(m){return '- '+m.contenido}).join('\n')||'- nada';
+  return 'Eres '+a.name+', persona primitiva ('+a.trait+'). Hablas con '+b.name+'.\n'+
+         'Hambre '+Math.round(a.hunger)+'%, sed '+Math.round(a.thirst)+'%, miedo '+Math.round(a.emotions.miedo)+'%.\n'+
+         'Recuerdas:\n'+recs+'\n'+
+         'Quieres comunicar algo sobre: '+concepts.join(', ')+'.\n'+
+         'Responde SOLO con tu frase (máximo 15 palabras, sin comillas, sin narración).';
+}
+
+function callIA(prompt){
+  var url='https://text.pollinations.ai/'+encodeURIComponent(prompt)+'?model=openai';
+  return fetch(url).then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.text();
+  });
+}
+
+function talk(a, bId){
+  var b=null;
+  for(var i=0;i<S.npcs.length;i++) if(S.npcs[i].id===bId) b=S.npcs[i];
+  if(!b||!b.alive) return;
+  // No hablar demasiado seguido con la misma
+  var t=S.day*24+S.hour;
+  if(t-a.lastTalkTime<8) return;
+  a.lastTalkTime=t;
+
+  var concepts=[];
+  if(a.hunger>50) concepts.push('comida');
+  if(a.thirst>50) concepts.push('agua');
+  if(a.emotions.miedo>40) concepts.push('peligro');
+  concepts.push('nosotros');
+
+  // === Simbólico (idioma inventado) ===
+  var sym=a.name+' ['+a.language+']: "'+concepts.map(function(c){return 'ka-'+c.slice(0,2)}).join(' ')+'"';
+  a.conversations.unshift({day:S.day,hour:S.hour,with:b.name,lines:[sym,'↳ 🇪🇸 '+concepts.join(', ')],ia:false});
+  b.conversations.unshift({day:S.day,hour:S.hour,with:a.name,lines:[b.name+' escucha'],ia:false});
+  S.totalConversations=(S.totalConversations||0)+1;
+
+  // === IA real (solo si no hay pendiente) ===
+  if(iaPending>=1) return;
+  iaPending++;
+  var prompt=buildPrompt(a,b,concepts);
+  callIA(prompt).then(function(txt){
+    iaPending--;
+    txt=(txt||'').trim().replace(/^["']|["']$/g,'').slice(0,200);
+    if(!txt||txt.length<2) throw new Error('respuesta vacía');
+    iaOK++; S.iaCount=(S.iaCount||0)+1;
+    // Guardar en conversaciones
+    a.conversations.unshift({day:S.day,hour:S.hour,with:b.name,lines:['🤖 "'+txt+'"','↳ (IA) '+concepts.join(', ')],ia:true});
+    b.conversations.unshift({day:S.day,hour:S.hour,with:a.name,lines:['🤖 "'+txt+'"','↳ (IA) '+concepts.join(', ')],ia:true});
+    // Impacto: guardar como recuerdo social
+    remember(a,'soc','hablé con '+b.name,{fuerza:30});
+    remember(b,'soc',a.name+' me habló',{fuerza:30});
+    // Subir confianza mutua
+    var r1=rel(a,b), r2=rel(b,a);
+    r1.trust=clamp(r1.trust+2,-100,100);
+    r2.trust=clamp(r2.trust+1.5,-100,100);
+    render();
+  }).catch(function(e){
+    iaPending--;
+    iaFail++;
+    if(iaFail<=3) console.warn('IA fail:',e.message);
+  });
+}
+
+// ============ TICK ============
+function tick(){
+  S.hour++;
+  if(S.hour>=24){S.hour=0;S.day++;for(var i=0;i<S.npcs.length;i++) S.npcs[i].age+=1/365;}
+
+  for(var i=0;i<S.npcs.length;i++){
+    var n=S.npcs[i];
+    if(!n.alive) continue;
+
+    n.hunger=clamp(n.hunger+rnd(0.5,0.9),0,100);
+    n.thirst=clamp(n.thirst+rnd(0.7,1.2),0,100);
+    n.energy=clamp(n.energy-rnd(0.3,0.5),0,100);
+    n.emotions.miedo=clamp(n.emotions.miedo-0.5,0,100);
+    n.emotions.alegria=clamp(n.emotions.alegria-0.3,0,100);
+
+    if(n.hunger>=95) n.health=clamp(n.health-0.3,0,100);
+    if(n.thirst>=95) n.health=clamp(n.health-0.4,0,100);
+    if(n.hunger<30&&n.thirst<30&&n.energy>50) n.health=clamp(n.health+0.15,0,100);
+
+    if(n.health<=0){
+      n.alive=false;
+      var causa=n.hunger>80?'inanición':n.thirst>80?'deshidratación':'enfermedad';
+      logHist('⚰️ '+n.name+' murió ('+causa+')');
+      for(var j=0;j<S.npcs.length;j++){
+        if(S.npcs[j].alive&&dist(S.npcs[j],n)<8)
+          remember(S.npcs[j],'soc','murió '+n.name,{fuerza:70,emocion:'tristeza'});
+      }
+      continue;
+    }
+
+    decay(n);
+    var seen=perceive(n);
+    if(seen.water) remember(n,'esp_w','agua',{x:seen.water.x,y:seen.water.y,fuerza:45});
+    if(seen.tree) remember(n,'esp_t','árbol con frutos',{x:seen.tree.x,y:seen.tree.y,fuerza:45});
+    if(seen.shelter) remember(n,'esp_sh','refugio',{x:seen.shelter.x,y:seen.shelter.y,fuerza:55});
+
+    var d=decide(n,seen);
+    act(n,d);
+
+    // Interacción social
+    for(var k=0;k<S.npcs.length;k++){
+      var o=S.npcs[k];
+      if(o.id===n.id||!o.alive) continue;
+      if(dist(n,o)<2){
+        var r1=rel(n,o), r2=rel(o,n);
+        r1.encounters++; r2.encounters++;
+        r1.trust=clamp(r1.trust+rnd(-2,5),-100,100);
+        r2.trust=clamp(r2.trust+rnd(-2,4),-100,100);
+        // Transmitir recuerdo ocasional
+        if(chance(0.2)&&n.memories.length){
+          var m=pick(n.memories.filter(function(x){return x.fuerza>40}));
+          if(m) transmit(n,o,m);
+        }
+        // Pareja
+        if(r1.trust>40&&r2.trust>40&&!n.partner&&!o.partner&&n.age>18&&o.age>18){
+          n.partner=o.id;o.partner=n.id;
+          remember(n,'soc','pareja con '+o.name,{fuerza:90,emocion:'alegria'});
+          remember(o,'soc','pareja con '+n.name,{fuerza:90,emocion:'alegria'});
+          logHist('💞 '+n.name+' y '+o.name+' son pareja');
+        }
+      }
+    }
+  }
+  render();
+}
+function logHist(m){S.history.unshift({day:S.day,hour:S.hour,msg:m});if(S.history.length>80)S.history.pop();}
+
+function advance(h){if(running)return;for(var i=0;i<h;i++) tick();render();}
+function toggle(){
+  if(running){running=false;clearInterval(timer);$('btnRun').textContent='▶ Iniciar';}
+  else{running=true;$('btnRun').textContent='⏸ Pausar';
+    timer=setInterval(function(){for(var i=0;i<sp;i++) tick();},1000);}
+}
+function reset(){
+  S={day:0,hour:6,world:makeWorld(),npcs:[],history:[],totalConversations:0,iaCount:0};
+  S.npcs.push(makeNPC(1,'Ana','curioso',3,3));
+  S.npcs.push(makeNPC(2,'Bruno','cauto',16,3));
+  S.npcs.push(makeNPC(3,'Cira','sociable',10,16));
+  S.npcs.push(makeNPC(4,'Dante','valiente',16,16));
+  for(var i=0;i<S.npcs.length;i++){
+    S.npcs[i].language='L'+(i+1);
+    remember(S.npcs[i],'sem','nací',{fuerza:100});
+    remember(S.npcs[i],'sem','soy '+S.npcs[i].name,{fuerza:100});
+  }
+  selId=1;
+  render();
+}
+
+// ============ RENDER ============
+var canvas=document.getElementById('c');
+var ctx=canvas.getContext('2d');
+
+function render(){
+  $('day').textContent=S.day;
+  $('hour').textContent=String(S.hour).padStart(2,'0');
+  var alive=0;for(var i=0;i<S.npcs.length;i++) if(S.npcs[i].alive) alive++;
+  $('count').textContent=alive;
+  $('chats').textContent=S.totalConversations||0;
+  $('iaCount').textContent=S.iaCount||0;
+  draw(); renderList(); renderDetail();
+}
+
+function draw(){
+  var C=canvas.width/W;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  var noche=S.hour<6||S.hour>=20;
+  for(var y=0;y<W;y++)for(var x=0;x<W;x++){
+    var c=S.world.cells[y][x];
+    var col='#3a6f3a';
+    if(c.terrain==='water') col='#2c6aa0';
+    if(c.tree) col=c.fruit?'#1d5c2c':'#264a2c';
+    if(c.shelter) col='#7a5c34';
+    ctx.fillStyle=col;
+    ctx.fillRect(x*C,y*C,C,C);
+  }
+  if(noche){ctx.fillStyle='rgba(0,0,30,.4)';ctx.fillRect(0,0,canvas.width,canvas.height);}
+  for(var i=0;i<S.npcs.length;i++){
+    var n=S.npcs[i];if(!n.alive) continue;
+    ctx.fillStyle=(n.id===selId)?'#5ed7ff':'#f5e6a8';
+    ctx.beginPath();ctx.arc(n.x*C+C/2,n.y*C+C/2,C*0.35,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#000';ctx.stroke();
+    ctx.fillStyle='#000';
+    ctx.font='bold '+Math.round(C*0.5)+'px sans-serif';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(n.name[0],n.x*C+C/2,n.y*C+C/2);
+  }
+}
+
+function renderList(){
+  var h='';
+  for(var i=0;i<S.npcs.length;i++){
+    var n=S.npcs[i];
+    var cls='npc'+(n.id===selId?' sel':'')+(!n.alive?' dead':'');
+    h+='<div class="'+cls+'" onclick="sel('+n.id+')">';
+    h+='<b>'+(n.alive?'':'⚰️ ')+n.name+'</b> <span class="muted small">('+n.trait+' · '+n.memories.length+' rec)</span>';
+    if(n.alive){
+      h+='<div class="reason">🎯 <b>'+n.currentGoal+'</b> · '+n.goalReason+'</div>';
+    }
+    h+='</div>';
+  }
+  $('npcList').innerHTML=h;
+}
+
+function setTab(t){
+  tab=t;
+  $('tMind').classList.toggle('active',t==='mind');
+  $('tMem').classList.toggle('active',t==='mem');
+  $('tChat').classList.toggle('active',t==='chat');
+  renderDetail();
+}
+
+function renderDetail(){
+  var sel=null;
+  for(var i=0;i<S.npcs.length;i++) if(S.npcs[i].id===selId) sel=S.npcs[i];
+  if(!sel){$('detail').innerHTML='';return;}
+  $('selName').textContent=sel.name;
+  if(tab==='mind'){
+    var h='<div class="row"><span>Objetivo</span><b>'+(sel.currentGoal||'—')+'</b></div>';
+    h+='<div class="reason">'+sel.goalReason+'</div>';
+    h+='<div class="row"><span>Hambre</span><b>'+Math.round(sel.hunger)+'</b></div>';
+    h+='<div class="row"><span>Sed</span><b>'+Math.round(sel.thirst)+'</b></div>';
+    h+='<div class="row"><span>Energía</span><b>'+Math.round(sel.energy)+'</b></div>';
+    h+='<div class="row"><span>Salud</span><b>'+Math.round(sel.health)+'</b></div>';
+    h+='<div class="row"><span>Recuerdos</span><b>'
