@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Civilización V7.3 — Encuentros</title>
+    <style>
+        body {
+            background-color: #0d1117;
+            color: white;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+        h1 { font-size: 18px; margin: 0 0 10px 0; }
+        .botones {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        button {
+            background-color: #21262d;
+            color: white;
+            border: 1px solid #30363d;
+            padding: 10px;
+            border-radius: 6px;
+            flex: 1;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button.iniciar { background-color: #1f6feb; border-color: #1f6feb; }
+        button.reiniciar { background-color: #6e2020; border-color: #6e2020; }
+        
+        .barra-estado {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 14px;
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        /* Aquí está el área que antes estaba negra */
+        #area-juego {
+            flex-grow: 1;
+            background-color: #000;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            position: relative;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🌍 Civilización V7.3 — Encuentros</h1>
+
+    <div class="botones">
+        <button class="iniciar" onclick="iniciarJuego()">▶ Iniciar</button>
+        <button onclick="avanzarTiempo(1)">+1 hora</button>
+        <button onclick="avanzarTiempo(24)">+1 día</button>
+        <button class="reiniciar" onclick="reiniciarJuego()">Reiniciar</button>
+    </div>
+
+    <div class="barra-estado">
+        <span>📅 Día <span id="dia">0</span></span>
+        <span>🕒 <span id="hora">06</span></span>
+        <span>☀️</span>
+        <span>👥 <span id="poblacion">3</span></span>
+        <span>🌳 <span id="arboles">0</span></span>
+        <span>🍌 <span id="comida">0</span></span>
+    </div>
+
+    <!-- El área de juego ahora es un Canvas -->
+    <div id="area-juego">
+        <canvas id="lienzo"></canvas>
+    </div>
+
+    <script>
+        // --- VARIABLES DEL JUEGO ---
+        let dia = 0;
+        let hora = 6;
+        let poblacion = 3;
+        let arboles = 0;
+        let comida = 0;
+        let juegoIniciado = false;
+
+        const canvas = document.getElementById('lienzo');
+        const ctx = canvas.getContext('2d');
+
+        // Ajustar el tamaño del canvas al tamaño de la pantalla
+        function ajustarCanvas() {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+            if (juegoIniciado) dibujarMapa();
+        }
+        window.addEventListener('resize', ajustarCanvas);
+        ajustarCanvas(); // Llamar al inicio
+
+        // --- FUNCIONES DE DIBUJO ---
+        function dibujarMapa() {
+            // Limpiar el canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Dibujar un fondo verde oscuro para el mapa (simulando terreno)
+            ctx.fillStyle = '#1a3a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Dibujar un texto en el centro para saber que funciona
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('¡Mapa cargado correctamente!', canvas.width / 2, canvas.height / 2);
+            ctx.font = '14px Arial';
+            ctx.fillText(`Población: ${poblacion} | Árboles: ${arboles}`, canvas.width / 2, canvas.height / 2 + 30);
+        }
+
+        // --- LÓGICA DEL JUEGO ---
+        function actualizarInterfaz() {
+            document.getElementById('dia').textContent = dia;
+            document.getElementById('hora').textContent = hora.toString().padStart(2, '0');
+            document.getElementById('poblacion').textContent = poblacion;
+            document.getElementById('arboles').textContent = arboles;
+            document.getElementById('comida').textContent = comida;
+        }
+
+        function iniciarJuego() {
+            juegoIniciado = true;
+            dibujarMapa();
+            actualizarInterfaz();
+        }
+
+        function avanzarTiempo(horas) {
+            if (!juegoIniciado) return; // No hacer nada si no ha iniciado
+
+            hora += horas;
+            if (hora >= 24) {
+                hora = hora - 24;
+                dia++;
+                // Lógica de crecimiento de árboles o comida
+                arboles += Math.floor(Math.random() * 3);
+                comida += Math.floor(Math.random() * 5);
+            }
+            
+            actualizarInterfaz();
+            dibujarMapa(); // Redibujar el mapa con los nuevos datos
+        }
+
+        function reiniciarJuego() {
+            dia = 0;
+            hora = 6;
+            poblacion = 3;
+            arboles = 0;
+            comida = 0;
+            juegoIniciado = false;
+            actualizarInterfaz();
+            
+            // Limpiar el canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // Inicializar la interfaz al cargar
+        actualizarInterfaz();
+    </script>
+</body>
+</html>
